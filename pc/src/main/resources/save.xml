@@ -1,0 +1,35 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <int name="selected3" value="0" />
+    <int name="mods" value="0" />
+    <long name="breedEnd2" value="0" />
+    <long name="breedEnd1" value="0" />
+    <long name="breedEnd3" value="0" />
+    <boolean name="sound" value="false" />
+    <string name="skins1">0</string>
+    <int name="best" value="878" />
+    <string name="herd2">0</string>
+    <string name="herd1">0</string>
+    <long name="rushBest0" value="12349" />
+    <string name="herd3">0</string>
+    <int name="unlocked" value="1" />
+    <int name="selected1" value="0" />
+    <string name="skins2">0</string>
+    <int name="selected2" value="0" />
+    <string name="skins3">0</string>
+    <string name="skins">0,0,6</string>
+    <long name="lastCollect" value="1794229547975" />
+    <int name="activeFarm" value="0" />
+    <long name="ownedSkins" value="103" />
+    <long name="breedEnd" value="1794229570770" />
+    <string name="remoteNotes">Хватка на стене, новое кольцо пуха у босса, исправлена мигающая ночь</string>
+    <int name="remoteCode" value="7" />
+    <int name="dismissedCode" value="0" />
+    <int name="selected" value="2" />
+    <string name="herd">1040,3363,2730</string>
+    <int name="freeBoxes" value="0" />
+    <string name="remoteApk">https://github.com/narezy/tilcayo/raw/main/apk/tilcayo.apk</string>
+    <long name="coins" value="1014" />
+    <long name="lastUpdateCheck" value="1794223175586" />
+    <string name="remoteName">1.6</string>
+</map>

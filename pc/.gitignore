@@ -1,0 +1,9 @@
+.gradle/
+build/
+dist/
+.idea/
+*.iml
+.kotlin/
+*.png
+!src/main/resources/*.png
+!*.ico
