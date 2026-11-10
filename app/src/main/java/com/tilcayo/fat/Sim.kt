@@ -106,7 +106,7 @@ class Boss(val hpMax: Int, val kind: Int = 0) {
     var hover = 0f
     var stun = 0f
     var flash = 0f
-    var attack = 0
+    var attack = -1
     var dir = 1
     var fired = 0
     var seed = 1234567
@@ -1038,6 +1038,7 @@ class Sim {
         bumpers.removeAll { it.y > bottom }
     }
 }
+
 
 
 
