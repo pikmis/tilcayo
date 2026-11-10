@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.7",
+  "versionCode": 9,
+  "versionName": "1.8",
   "apk": "https://github.com/narezy/tilcayo/raw/main/apk/tilcayo.apk",
-  "notes": "Мягкие звуки и музыка вместо старого «пиканья», генерация уровня стала честной после 2000 м"
+  "notes": "Второй босс — Ригби, полосатая кошка с языком наружу. Генерация уровня честнее, звуки мягче"
 }

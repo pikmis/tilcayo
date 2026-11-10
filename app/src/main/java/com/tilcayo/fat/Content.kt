@@ -214,11 +214,30 @@ object Mods {
     fun count(mask: Int) = all.count { has(mask, it.id) }
 }
 
-/** Босс для режима «Босс-раш». */
-class BossDef(val name: String, val hp: Int, val reward: Long, val par: Float)
+/**
+ * Босс: имя, здоровье в босс-раше, награда, время «по норме».
+ * kind — номер спрайта (drawable boss/boss2/…) и набор повадок в бою.
+ */
+class BossDef(
+    val name: String,
+    val hp: Int,
+    val reward: Long,
+    val par: Float,
+    val kind: Int = 0,
+    /** Цвет заголовка в баннере появления. */
+    val tint: Int = 0xFFFF1744.toInt(),
+)
 
 object Bosses {
     val all = listOf(
         BossDef("Толстый Котозаяц", 6, 500L, 60f),
+        BossDef("Ригби", 7, 900L, 75f, kind = 1, tint = 0xFF29B6F6.toInt()),
     )
+
+    /** Кого выпускать следующим: боссы идут по кругу, начиная с первого. */
+    fun next(beaten: Int) = all[((beaten % all.size) + all.size) % all.size]
+
+    fun name(kind: Int) = def(kind).name
+
+    fun def(kind: Int) = all.getOrElse(kind) { all[0] }
 }
