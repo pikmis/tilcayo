@@ -1,4 +1,4 @@
-package com.tilcayo.fat
+﻿package com.tilcayo.fat
 
 import kotlin.math.PI
 import kotlin.math.abs
@@ -74,8 +74,8 @@ class Pillar(val x0: Float, val y0: Float, val x1: Float, val y1: Float, val hot
 class Cannon(val x: Float, val y: Float) { var used = false; var ang = 0f }
 class Bumper(val x: Float, val y: Float) { var pop = 0f }
 
-/** Арена боя с боссом: пустой участок уровня. */
-class Arena(val top: Float, val bottom: Float, val hp: Int) {
+/** Арена боя с боссом: пустой участок уровня. kind — какой босс тут ждёт. */
+class Arena(val top: Float, val bottom: Float, val hp: Int, val kind: Int = 0) {
     var active = false
     var done = false
 }
@@ -96,8 +96,8 @@ class Bullet(var x: Float, var y: Float, var vx: Float, var vy: Float, var life:
     fun copy() = Bullet(x, y, vx, vy, life)
 }
 
-/** Толстый Котозаяц. Все состояния — простые поля, поэтому его легко копировать для ботов. */
-class Boss(val hpMax: Int) {
+/** Толстый Котозаяц (kind 0) или Кот Блеп (kind 1). Все состояния — простые поля, поэтому его легко копировать для ботов. */
+class Boss(val hpMax: Int, val kind: Int = 0) {
     var x = Phys.W / 2
     var y = 0f
     var hp = hpMax
@@ -111,7 +111,7 @@ class Boss(val hpMax: Int) {
     var fired = 0
     var seed = 1234567
     var tx = 0f
-    val cols = FloatArray(3)
+    val cols = FloatArray(4)
     var face = 1
     var off = 0f
     var dodgeT = 0f
@@ -120,13 +120,19 @@ class Boss(val hpMax: Int) {
     /** Направление безопасного прохода в кольце пуха. */
     var gapAng = 0f
 
+    /** Второй босс нервный: атакует чаще, но оставляет проход шире. */
+    val swift get() = kind == 1
+
+    /** Сколько колонн «морковного дождя» роняет босс. */
+    val colsN get() = if (kind == 1) 4 else 3
+
     fun rand(): Float {
         seed = seed * 1103515245 + 12345
         return ((seed ushr 8) and 0xFFFF) / 65536f
     }
 
     fun copy(): Boss {
-        val b = Boss(hpMax)
+        val b = Boss(hpMax, kind)
         b.x = x; b.y = y; b.hp = hp; b.state = state; b.t = t; b.hover = hover; b.stun = stun; b.flash = flash
         b.attack = attack; b.dir = dir; b.fired = fired; b.seed = seed; b.tx = tx; b.face = face
         b.gapAng = gapAng; b.off = off; b.dodgeT = dodgeT; b.dodgeCd = dodgeCd; b.dodgeDir = dodgeDir
@@ -141,7 +147,8 @@ class Boss(val hpMax: Int) {
         fun angry(state: Int) = state in VOLLEY_TELE..RAIN_FALL
 
         /** Половина угла безопасного прохода (рад). С каждым ударом проход чуть уже. */
-        fun gapHalf(phase: Int) = max(0.45f, 0.66f - 0.035f * phase)
+        fun gapHalf(kind: Int, phase: Int) = max(0.45f, 0.66f - 0.035f * phase) * (if (kind == 1) 1.14f else 1f)
+
         const val ENTER = 0
         const val HOVER = 1
         const val VOLLEY_TELE = 2
@@ -637,7 +644,7 @@ class Sim {
 
     private fun startBoss(a: Arena) {
         a.active = true
-        val b = Boss(a.hp)
+        val b = Boss(a.hp, a.kind)
         b.seed = 987654 + bossesBeaten * 7919
         b.x = Phys.W / 2
         b.y = a.top - 140f
@@ -649,29 +656,66 @@ class Sim {
     private fun ease(k: Float) = k * k * (3f - 2f * k)
 
     private fun chooseAttack(b: Boss, phase: Int) {
-        var next = b.rand().times(3f).toInt().coerceIn(0, 2)
-        if (next == b.attack) next = (next + 1) % 3
-        b.attack = next
-        b.t = 0f
-        b.fired = 0
-        b.state = when (next) {
-            0 -> {
-                // безопасный проход — рядом с игроком, но не точно на нём: надо чуть сместиться
-                val toP = kotlin.math.atan2(py - b.y, px - b.x)
-                val off = (0.4f + 0.5f * b.rand()) * (if (b.rand() < 0.5f) -1f else 1f)
-                b.gapAng = toP + off
-                Boss.VOLLEY_TELE
+        if (b.swift) {
+            // Ригби рандомит 4 способки: спираль, волна шерсти, цепь дождя, прыг-скок
+            var next = b.rand().times(4f).toInt().coerceIn(0, 3)
+            if (next == b.attack) next = (next + 1) % 4
+            b.attack = next
+            b.t = 0f
+            b.fired = 0
+            b.state = when (next) {
+                0 -> {
+                    // спираль: волны пуха, разбегающиеся от центра
+                    b.gapAng = 0f
+                    Boss.VOLLEY_TELE
+                }
+                1 -> {
+                    // волна шерсти по горизонтали
+                    b.gapAng = 0f
+                    Boss.CHARGE_MOVE
+                }
+                2 -> {
+                    // цепь дождя: морковки падают волнообразно
+                    val lo = Phys.WALL + 30f
+                    val hi = Phys.W - Phys.WALL - 30f
+                    val n = b.colsN
+                    for (i in 0 until n) b.cols[i] = lo + (hi - lo) * ((i + 0.15f + 0.7f * b.rand()) / n)
+                    Boss.RAIN_TELE
+                }
+                else -> {
+                    // прыг-скок: быстрый рывок в случайном направлении
+                    b.dir = if (b.rand() < 0.5f) 1 else -1
+                    Boss.CHARGE_MOVE
+                }
             }
-            1 -> { b.dir = if (b.rand() < 0.5f) 1 else -1; Boss.CHARGE_MOVE }
-            else -> {
-                // три колонны дождя на расстоянии друг от друга
-                val lo = Phys.WALL + 30f
-                val hi = Phys.W - Phys.WALL - 30f
-                for (i in 0 until 3) b.cols[i] = lo + (hi - lo) * ((i + 0.15f + 0.7f * b.rand()) / 3f)
-                Boss.RAIN_TELE
+            events.add(Ev(Ev.BOSS_TELE, b.x, b.y, next))
+        } else {
+            // Котозаяц: 3 способки как раньше
+            var next = b.rand().times(3f).toInt().coerceIn(0, 2)
+            if (next == b.attack) next = (next + 1) % 3
+            b.attack = next
+            b.t = 0f
+            b.fired = 0
+            b.state = when (next) {
+                0 -> {
+                    // безопасный проход — рядом с игроком, но не точно на нём: надо чуть сместиться
+                    val toP = kotlin.math.atan2(py - b.y, px - b.x)
+                    val off = (0.4f + 0.5f * b.rand()) * (if (b.rand() < 0.5f) -1f else 1f)
+                    b.gapAng = toP + off
+                    Boss.VOLLEY_TELE
+                }
+                1 -> { b.dir = if (b.rand() < 0.5f) 1 else -1; Boss.CHARGE_MOVE }
+                else -> {
+                    // колонны дождя на расстоянии друг от друга
+                    val lo = Phys.WALL + 30f
+                    val hi = Phys.W - Phys.WALL - 30f
+                    val n = b.colsN
+                    for (i in 0 until n) b.cols[i] = lo + (hi - lo) * ((i + 0.15f + 0.7f * b.rand()) / n)
+                    Boss.RAIN_TELE
+                }
             }
+            events.add(Ev(Ev.BOSS_TELE, b.x, b.y, next))
         }
-        events.add(Ev(Ev.BOSS_TELE, b.x, b.y, next))
     }
 
     private fun updateBoss(dt: Float) {
@@ -713,20 +757,20 @@ class Sim {
                     b.dodgeT = 0.3f
                     b.dodgeCd = max(0.9f, 1.7f - 0.15f * phase)
                 }
-                if (b.t >= max(0.6f, 1.4f - 0.12f * phase)) chooseAttack(b, phase)
+                if (b.t >= max(0.6f, 1.4f - 0.12f * phase) * (if (b.swift) 0.82f else 1f)) chooseAttack(b, phase)
             }
             Boss.VOLLEY_TELE -> {
                 b.y = hoverY + sin(b.t * 30f) * 2f
-                if (b.t >= max(0.75f, 1.1f - 0.06f * phase)) { b.state = Boss.VOLLEY_FIRE; b.t = 0f; b.fired = 0 }
+                if (b.t >= max(0.75f, 1.1f - 0.06f * phase) * (if (b.swift) 0.85f else 1f)) { b.state = Boss.VOLLEY_FIRE; b.t = 0f; b.fired = 0 }
             }
             Boss.VOLLEY_FIRE -> {
                 // кольцо пуха с проходом; позже — второе кольцо с тем же проходом
-                val waves = if (phase >= 2) 2 else 1
+                val waves = if (phase >= (if (b.swift) 1 else 2)) 2 else 1
                 if (b.fired < waves && b.t >= 0.6f * b.fired) {
                     b.fired++
                     val n = 18
                     val step = Phys.TAU / n
-                    val half = Boss.gapHalf(phase)
+                    val half = Boss.gapHalf(b.kind, phase)
                     val sp = 150f + 8f * phase
                     for (i in 0 until n) {
                         val ang = b.gapAng + step / 2f + i * step
@@ -748,10 +792,10 @@ class Sim {
             }
             Boss.CHARGE_WARN -> {
                 b.face = b.dir
-                if (b.t >= max(0.4f, 0.8f - 0.07f * phase)) { b.state = Boss.CHARGE_GO; b.t = 0f }
+                if (b.t >= max(0.4f, 0.8f - 0.07f * phase) * (if (b.swift) 0.85f else 1f)) { b.state = Boss.CHARGE_GO; b.t = 0f }
             }
             Boss.CHARGE_GO -> {
-                b.x += b.dir * (470f + 40f * phase) * dt
+                b.x += b.dir * (470f + 40f * phase + (if (b.swift) 90f else 0f)) * dt
                 if (b.dir > 0 && b.x >= mid + range) { b.x = mid + range; b.state = Boss.CHARGE_BACK; b.t = 0f }
                 if (b.dir < 0 && b.x <= mid - range) { b.x = mid - range; b.state = Boss.CHARGE_BACK; b.t = 0f }
             }
@@ -761,13 +805,14 @@ class Sim {
             }
             Boss.RAIN_TELE -> {
                 b.y = hoverY + sin(b.t * 30f) * 2f
-                if (b.t >= max(0.5f, 0.95f - 0.08f * phase)) { b.state = Boss.RAIN_FALL; b.t = 0f; b.fired = 0 }
+                if (b.t >= max(0.5f, 0.95f - 0.08f * phase) * (if (b.swift) 0.85f else 1f)) { b.state = Boss.RAIN_FALL; b.t = 0f; b.fired = 0 }
             }
             Boss.RAIN_FALL -> {
                 // три залпа: в каждой колонне по морковке
                 if (b.fired < 3 && b.t >= 0.24f * b.fired) {
                     b.fired++
-                    for (i in 0 until 3) hairs.add(Hair(b.cols[i], a.top - 10f, 0f, 380f + 20f * phase, 1, 6f))
+                    val sp = 380f + 20f * phase + (if (b.swift) 40f else 0f)
+                    for (i in 0 until b.colsN) hairs.add(Hair(b.cols[i], a.top - 10f, 0f, sp, 1, 6f))
                     events.add(Ev(Ev.BOSS_FIRE, b.cols[1], a.top))
                 }
                 if (b.fired >= 3 && b.t >= 1.3f) { b.state = Boss.HOVER; b.t = 0f }
@@ -826,7 +871,7 @@ class Sim {
                 } else if (!Boss.angry(b.state)) {
                     hitBoss(b, a, 1)
                 } else if (shield <= 0f) {
-                    die("Толстый Котозаяц тебя расплющил 🐰")
+                    die(Bosses.name(b.kind) + " тебя расплющил 🐾")
                 }
             }
         }
@@ -899,9 +944,9 @@ class Sim {
     }
 
     /** Режим «Босс-раш»: игрок сразу в арене, остального уровня нет. */
-    fun startRush(hp: Int) {
+    fun startRush(hp: Int, kind: Int = 0) {
         val ah = min(620f, viewH - 150f)
-        val a = Arena(-80f - ah, -80f, hp)
+        val a = Arena(-80f - ah, -80f, hp, kind)
         arena = a
         side = -1
         face = 1
@@ -993,3 +1038,5 @@ class Sim {
         bumpers.removeAll { it.y > bottom }
     }
 }
+
+
