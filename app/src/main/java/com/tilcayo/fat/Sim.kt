@@ -1,4 +1,4 @@
-﻿package com.tilcayo.fat
+package com.tilcayo.fat
 
 import kotlin.math.PI
 import kotlin.math.abs
@@ -764,25 +764,40 @@ class Sim {
                 if (b.t >= max(0.75f, 1.1f - 0.06f * phase) * (if (b.swift) 0.85f else 1f)) { b.state = Boss.VOLLEY_FIRE; b.t = 0f; b.fired = 0 }
             }
             Boss.VOLLEY_FIRE -> {
-                // кольцо пуха с проходом; позже — второе кольцо с тем же проходом
-                val waves = if (phase >= (if (b.swift) 1 else 2)) 2 else 1
-                if (b.fired < waves && b.t >= 0.6f * b.fired) {
-                    b.fired++
-                    val n = 18
-                    val step = Phys.TAU / n
-                    val half = Boss.gapHalf(b.kind, phase)
-                    val sp = 150f + 8f * phase
-                    for (i in 0 until n) {
-                        val ang = b.gapAng + step / 2f + i * step
-                        var diff = (ang - b.gapAng) % Phys.TAU
-                        if (diff > Math.PI) diff -= Phys.TAU
-                        if (diff < -Math.PI) diff += Phys.TAU
-                        if (abs(diff) < half) continue
-                        hairs.add(Hair(b.x + cos(ang) * 28f, b.y + sin(ang) * 28f, cos(ang) * sp, sin(ang) * sp, 0, 6f))
+                if (b.swift && b.attack == 0) {
+                    // Rigby claw ring
+                    if (b.fired < 1 && b.t >= 0.5f) {
+                        b.fired++
+                        val n = 24
+                        val step = Phys.TAU / n
+                        val sp = 220f + 15f * phase
+                        for (i in 0 until n) {
+                            val ang = i * step
+                            hairs.add(Hair(b.x + cos(ang) * 35f, b.y + sin(ang) * 35f, cos(ang) * sp, sin(ang) * sp, 0, 6f))
+                        }
                     }
-                    events.add(Ev(Ev.BOSS_FIRE, b.x, b.y))
+                    if (b.fired >= 1 && b.t >= 0.8f) { b.state = Boss.HOVER; b.t = 0f }
+                } else {
+                    // Rabbit puff ring
+                    val waves = if (phase >= (if (b.swift) 1 else 2)) 2 else 1
+                    if (b.fired < waves && b.t >= 0.6f * b.fired) {
+                        b.fired++
+                        val n = 18
+                        val step = Phys.TAU / n
+                        val half = Boss.gapHalf(b.kind, phase)
+                        val sp = 150f + 8f * phase
+                        for (i in 0 until n) {
+                            val ang = b.gapAng + step / 2f + i * step
+                            var diff = (ang - b.gapAng) % Phys.TAU
+                            if (diff > Math.PI) diff -= Phys.TAU
+                            if (diff < -Math.PI) diff += Phys.TAU
+                            if (abs(diff) < half) continue
+                            hairs.add(Hair(b.x + cos(ang) * 28f, b.y + sin(ang) * 28f, cos(ang) * sp, sin(ang) * sp, 0, 6f))
+                        }
+                    }
+                    if (b.fired >= waves && b.t >= 0.6f * (waves - 1) + 0.7f) { b.state = Boss.HOVER; b.t = 0f }
                 }
-                if (b.fired >= waves && b.t >= 0.6f * (waves - 1) + 0.7f) { b.state = Boss.HOVER; b.t = 0f }
+                events.add(Ev(Ev.BOSS_FIRE, b.x, b.y))
             }
             Boss.CHARGE_MOVE -> {
                 val tx = mid - b.dir * range
@@ -795,9 +810,27 @@ class Sim {
                 if (b.t >= max(0.4f, 0.8f - 0.07f * phase) * (if (b.swift) 0.85f else 1f)) { b.state = Boss.CHARGE_GO; b.t = 0f }
             }
             Boss.CHARGE_GO -> {
-                b.x += b.dir * (470f + 40f * phase + (if (b.swift) 90f else 0f)) * dt
-                if (b.dir > 0 && b.x >= mid + range) { b.x = mid + range; b.state = Boss.CHARGE_BACK; b.t = 0f }
-                if (b.dir < 0 && b.x <= mid - range) { b.x = mid - range; b.state = Boss.CHARGE_BACK; b.t = 0f }
+                if (b.swift && b.attack == 1) {
+                    // Rigby tongue wave
+                    if (b.t >= 0.4f && b.fired == 0) {
+                        b.fired++
+                        val n = 16
+                        val sp = 240f + 20f * phase
+                        for (i in 0 until n) {
+                            val x = Phys.WALL + 30f + (Phys.W - 2 * Phys.WALL - 60f) * i / n
+                            val angle = (i - n/2f) * 0.15f
+                            val vx = cos(angle) * sp
+                            val vy = sin(angle) * sp - 80f
+                            hairs.add(Hair(x, b.y, vx, vy, 0, 6f))
+                        }
+                        events.add(Ev(Ev.BOSS_FIRE, b.x, b.y))
+                    }
+                    if (b.t >= 0.7f) { b.state = Boss.HOVER; b.t = 0f }
+                } else {
+                    b.x += b.dir * (470f + 40f * phase + (if (b.swift) 90f else 0f)) * dt
+                    if (b.dir > 0 && b.x >= mid + range) { b.x = mid + range; b.state = Boss.CHARGE_BACK; b.t = 0f }
+                    if (b.dir < 0 && b.x <= mid - range) { b.x = mid - range; b.state = Boss.CHARGE_BACK; b.t = 0f }
+                }
             }
             Boss.CHARGE_BACK -> {
                 b.x += (mid - b.x) * min(1f, dt * 3f)
