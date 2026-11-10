@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.6",
+  "versionCode": 8,
+  "versionName": "1.7",
   "apk": "https://github.com/narezy/tilcayo/raw/main/apk/tilcayo.apk",
-  "notes": "Хватка на стене, новое кольцо пуха у босса, исправлена мигающая ночь"
+  "notes": "Мягкие звуки и музыка вместо старого «пиканья», генерация уровня стала честной после 2000 м"
 }

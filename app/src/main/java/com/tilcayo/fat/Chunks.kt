@@ -2,10 +2,18 @@ package com.tilcayo.fat
 
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
+
+/** Окно по высоте, за которое игрок делает один прыжок: плотность опасностей считаем по нему. */
+private const val THREAT_WINDOW = 240f
+
+/** Минимальный зазор между бампером и режущей ловушкой: иначе отскок бросает прямо в смерть. */
+private const val BUMPER_CLEAR = 100f
 
 /** Один элемент куска уровня: буква-тип и числа. Координаты по y — от основания куска (вверх = минус). */
 class ChunkItem(val kind: Char, val v: FloatArray)
@@ -85,12 +93,16 @@ class Gen(private val sim: Sim, private val lib: List<ChunkTemplate>, private va
     private var lastWasBreather = false
     private val recent = ArrayDeque<Int>()
 
+    /** Вертикальные отрезки уже поставленных опасностей — чтобы новые не сбивались в «стену». */
+    private val threats = ArrayList<FloatArray>()
+
     fun reset() {
         lastCannonH = 0f
         lastBossH = 0f
         calmUntil = Float.POSITIVE_INFINITY
         lastWasBreather = false
         recent.clear()
+        threats.clear()
     }
 
     fun fill(upTo: Float) {
@@ -116,30 +128,197 @@ class Gen(private val sim: Sim, private val lib: List<ChunkTemplate>, private va
 
     private fun libChunk(y: Float, h: Float): Float {
         lastWasBreather = false
+        val effH = if (dense) h * 1.35f else h
         val cands = ArrayList<Int>()
         val ws = ArrayList<Float>()
-        val effH = if (dense) h * 1.35f else h
         for ((i, t) in lib.withIndex()) {
             if (t.minH > effH || i in recent) continue
             // чем «старее» уровень сложности, тем реже он выпадает — игра постепенно усложняется
             val age = (effH - t.minH) / 3500f
             cands.add(i)
-            ws.add(t.weight * kotlin.math.exp(-age))
+            ws.add(t.weight * exp(-age))
         }
         if (cands.isEmpty()) return coinChunk(y)
+        val p = pick(cands, ws)
+        commit(p, y, rnd.nextBoolean())
+        return lib[p].height
+    }
+
+    private fun commit(pick: Int, y: Float, mirror: Boolean) {
+        recent.addLast(pick)
+        while (recent.size > min(8, lib.size / 3)) recent.removeFirst()
+        place(lib[pick], y, mirror)
+    }
+
+    private fun pick(cands: List<Int>, ws: List<Float>): Int {
         var tot = 0f
         for (w in ws) tot += w
         var x = rnd.nextFloat() * tot
-        var pick = cands.last()
         for (i in cands.indices) {
             x -= ws[i]
-            if (x <= 0f) { pick = cands[i]; break }
+            if (x <= 0f) return cands[i]
         }
-        recent.addLast(pick)
-        while (recent.size > min(8, lib.size / 3)) recent.removeFirst()
-        val t = lib[pick]
-        ChunkLib.instantiate(sim, t, y, rnd.nextBoolean())
-        return t.height
+        return cands.last()
+    }
+
+    /**
+     * Сколько опасностей максимум допустимо в окне [THREAT_WINDOW] на этой высоте.
+     * Раньше ограничения не было вовсе — отсюда и непроходимые стены после 2000 м.
+     * Чем выше, тем строже локальный лимит: сложность растёт от новых типов ловушек,
+     * а не от плотности. Растущая плотность и была причиной «нечестных» участков.
+     */
+    private fun limit(h: Float): Int {
+        val base = when {
+            h < 500f -> 7
+            h < 1200f -> 6
+            h < 2000f -> 5
+            else -> 4
+        }
+        return if (dense) base + 1 else base
+    }
+
+    /**
+     * Сколько опасностей максимум попадает в окно высотой [THREAT_WINDOW].
+     * Считаем именно препятствия, а не точки вдоль них: длинная рельса — одна опасность,
+     * которую надо обойти, а не четыре.
+     */
+    private fun maxInWindow(spans: List<FloatArray>): Int {
+        if (spans.isEmpty()) return 0
+        var lo = Float.POSITIVE_INFINITY
+        var hi = Float.NEGATIVE_INFINITY
+        for (s in spans) {
+            lo = min(lo, s[0])
+            hi = max(hi, s[1])
+        }
+        val half = THREAT_WINDOW / 2
+        var best = 0
+        var c = lo - half
+        val end = hi + half
+        while (c <= end) {
+            var n = 0
+            for (s in spans) if (s[1] > c - half && s[0] < c + half) n++
+            if (n > best) best = n
+            c += 40f
+        }
+        return best
+    }
+
+    /** Вертикальный отрезок, который занимает элемент; null — для безопасных предметов. */
+    private fun itemSpan(kind: Char, v: FloatArray, baseY: Float): FloatArray? = when (kind) {
+        'S' -> span(baseY + v[1], baseY + v[2])
+        'W' -> span(baseY + v[1], baseY + v[3])
+        'P' -> span(baseY + v[1], baseY + v[3])
+        'O' -> span(baseY + v[1] - v[2], baseY + v[1] + v[2])
+        'L' -> span(baseY + v[0], baseY + v[0])
+        else -> null
+    }
+
+    private fun span(a: Float, b: Float) = floatArrayOf(min(a, b), max(a, b))
+
+    /** Ставит кусок в мир, попутно расчищая бамперы от режущих ловушек. */
+    private fun place(tpl: ChunkTemplate, baseY: Float, mirror: Boolean) {
+        clearBladesNearBumpers(baseY, mirror, tpl.items)
+        val safe = withoutBladesNearBumpers(baseY, mirror, tpl.items)
+        val items = trimByBudget(safe, baseY, lim = limit(-baseY))
+        val t = if (items.size == tpl.items.size) tpl else ChunkTemplate(tpl.minH, tpl.height, tpl.weight, items)
+        ChunkLib.instantiate(sim, t, baseY, mirror)
+        for (item in items) itemSpan(item.kind, item.v, baseY)?.let { threats.add(it) }
+        threats.removeAll { it[1] > baseY + 600f }
+    }
+
+    /**
+     * Выкидывает из куска те опасности, из-за которых в окне [THREAT_WINDOW] стало бы
+     * больше [lim] штук. Убрать препятствие всегда безопасно: проходимость только растёт,
+     * а кусок остаётся узнаваемым — в отличие от замены на пустую передышку.
+     */
+    private fun trimByBudget(items: List<ChunkItem>, baseY: Float, lim: Int): List<ChunkItem> {
+        val spans = ArrayList<FloatArray>(threats)
+        val kept = ArrayList<ChunkItem>(items.size)
+        for (item in items) {
+            val s = itemSpan(item.kind, item.v, baseY)
+            if (s == null) {
+                kept.add(item)
+                continue
+            }
+            spans.add(s)
+            if (maxInWindow(spans) <= lim) {
+                kept.add(item)
+            } else {
+                spans.removeAt(spans.size - 1)
+            }
+        }
+        return kept
+    }
+
+    /**
+     * Бампер отбрасывает игрока на полсотни пикселей в сторону. Если рядом пила,
+     * это смерть без шанса увернуться, поэтому такие пилы убираем.
+     */
+    private fun clearBladesNearBumpers(baseY: Float, mirror: Boolean, items: List<ChunkItem>) {
+        val w = Phys.W
+        for (item in items) {
+            if (item.kind != 'B') continue
+            val bx = if (mirror) w - item.v[0] else item.v[0]
+            val by = baseY + item.v[1]
+            sim.saws.removeAll { segDist(bx, by, it.x0, it.y0, it.x1, it.y1) < BUMPER_CLEAR }
+            sim.orbits.removeAll { hypot(it.cx - bx, it.cy - by) < it.rad + BUMPER_CLEAR }
+            sim.pillars.removeAll { it.hot && rectDist(bx, by, it.x0, it.y0, it.x1, it.y1) < BUMPER_CLEAR }
+        }
+    }
+
+    /** Выкидывает из куска пилы, стоящие вплотную к бамперу — своему или из прошлого куска. */
+    private fun withoutBladesNearBumpers(baseY: Float, mirror: Boolean, items: List<ChunkItem>): List<ChunkItem> {
+        val w = Phys.W
+        val bx = ArrayList<Float>()
+        val by = ArrayList<Float>()
+        for (b in sim.bumpers) {
+            bx.add(b.x)
+            by.add(b.y)
+        }
+        for (item in items) if (item.kind == 'B') {
+            bx.add(if (mirror) w - item.v[0] else item.v[0])
+            by.add(baseY + item.v[1])
+        }
+        if (bx.isEmpty()) return items
+        return items.filter { item ->
+            val v = item.v
+            var near = false
+            for (k in bx.indices) {
+                when (item.kind) {
+                    'W' -> {
+                        val x0 = if (mirror) w - v[0] else v[0]
+                        val x1 = if (mirror) w - v[2] else v[2]
+                        if (segDist(bx[k], by[k], x0, baseY + v[1], x1, baseY + v[3]) < BUMPER_CLEAR) near = true
+                    }
+                    'O' -> {
+                        val cx = if (mirror) w - v[0] else v[0]
+                        if (hypot(cx - bx[k], baseY + v[1] - by[k]) < v[2] + BUMPER_CLEAR) near = true
+                    }
+                    'P' -> if (v[4] > 0.5f) {
+                        val xa = if (mirror) w - v[0] else v[0]
+                        val xb = if (mirror) w - v[2] else v[2]
+                        if (rectDist(bx[k], by[k], min(xa, xb), baseY + v[1], max(xa, xb), baseY + v[3]) < BUMPER_CLEAR) near = true
+                    }
+                }
+                if (near) break
+            }
+            !near
+        }
+    }
+
+    /** Расстояние от точки до отрезка — рельса пилы целиком опасна. */
+    private fun segDist(px: Float, py: Float, x0: Float, y0: Float, x1: Float, y1: Float): Float {
+        val dx = x1 - x0
+        val dy = y1 - y0
+        val l2 = dx * dx + dy * dy
+        val t = if (l2 < 1e-4f) 0f else (((px - x0) * dx + (py - y0) * dy) / l2).coerceIn(0f, 1f)
+        return hypot(px - (x0 + dx * t), py - (y0 + dy * t))
+    }
+
+    private fun rectDist(px: Float, py: Float, x0: Float, y0: Float, x1: Float, y1: Float): Float {
+        val dx = max(0f, max(x0 - px, px - x1))
+        val dy = max(0f, max(y0 - py, py - y1))
+        return hypot(dx, dy)
     }
 
     // ---------- «ручные» куски ----------
@@ -225,6 +404,7 @@ class Gen(private val sim: Sim, private val lib: List<ChunkTemplate>, private va
         }
         for (i in 0 until 18) coin(mid + sin(i * 0.5f) * 60f, y - 270f - i * 34f)
         lastCannonH = h
+        // Передышка после пушки: там игрок летит по монеткам, препятствия не ставим.
         calmUntil = y - 1000f
         return 260f
     }
