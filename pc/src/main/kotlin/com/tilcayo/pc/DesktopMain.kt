@@ -511,6 +511,41 @@ private fun dumpSim(view: GameView, tag: String) {
 }
 
 /**
+ * Диагностика для --audio: рендерит музыкальный луп в WAV (для проверки синтеза).
+ * Музыка сочиняется в фоновом потоке игры, поэтому берём её приватный compose() рефлексией.
+ */
+private fun dumpMusic(dir: File) {
+    runCatching {
+        dir.mkdirs()
+        val music = com.tilcayo.fat.Music()
+        val compose = music.javaClass.getDeclaredMethod("compose").apply { isAccessible = true }
+        val samples = compose.invoke(music) as FloatArray
+        val out = File(dir, "music.wav")
+        out.writeBytes(writeWav(samples, 32000))
+        println("[audio] ${out.absolutePath} samples=${samples.size} (${"%.2f".format(samples.size / 32000f)} s)")
+    }.onFailure { println("[audio] fail: $it") }
+}
+
+/** 16-bit mono WAV из float-буфера с мягкой нормализацией. */
+private fun writeWav(src: FloatArray, sampleRate: Int): ByteArray {
+    var peak = 0.0001f
+    for (v in src) peak = maxOf(peak, kotlin.math.abs(v))
+    val k = if (peak > 0.99f) 0.99f / peak else 1f
+    val bytes = java.io.ByteArrayOutputStream(44 + src.size * 2)
+    fun le32(v: Int) { bytes.write(v and 255); bytes.write(v shr 8 and 255); bytes.write(v shr 16 and 255); bytes.write(v shr 24 and 255) }
+    fun le16(v: Int) { bytes.write(v and 255); bytes.write(v shr 8 and 255) }
+    bytes.write("RIFF".toByteArray()); le32(36 + src.size * 2)
+    bytes.write("WAVEfmt ".toByteArray()); le32(16); le16(1); le16(1)
+    le32(sampleRate); le32(sampleRate * 2); le16(2); le16(16)
+    bytes.write("data".toByteArray()); le32(src.size * 2)
+    for (v in src) {
+        val s = (v * k * 32767f).toInt().coerceIn(-32768, 32767)
+        le16(s)
+    }
+    return bytes.toByteArray()
+}
+
+/**
  * Рывок в сторону клавишей = тот же жест, что и свайп мышью: DOWN в центре,
  * MOVE за порог SWIPE_U (16 «мировых» единиц, порог в пикселях = 16 * scale), UP.
  */
@@ -589,6 +624,10 @@ private fun runShotMode(args: Array<String>) {
             }
             "--jump" -> tapAt(view, LOGICAL_W / 2f, LOGICAL_H * 0.25f)
             "--dump" -> dumpSim(view, args.getOrNull(++i) ?: "state")
+            "--audio" -> {
+                val dir = File(args.getOrNull(++i) ?: ".")
+                dumpMusic(dir)
+            }
             "--dash" -> {
                 val dir = when (args.getOrNull(++i)?.lowercase()) {
                     "right", "r" -> 1
