@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 plugins {
     kotlin("jvm") version "2.0.21"
@@ -108,5 +110,23 @@ tasks.register("packageExe") {
         val result = providers.exec { commandLine(args) }
         result.result.get().assertNormalExitValue()
         logger.lifecycle("Готово: ${File(dist, "Tilcayo/Tilcayo.exe").absolutePath}")
+
+        // Портативный архив для передачи: dist/Tilcayo-<ver>-win-x64.zip
+        // (packageExe пересоздаёт dist, поэтому архив собираем здесь же — иначе он пропадает).
+        val zipFile = File(dist, "Tilcayo-1.0.0-win-x64.zip")
+        val guide = File(project.projectDir, "packaging/КАК ЗАПУСТИТЬ.txt")
+        ZipOutputStream(zipFile.outputStream().buffered()).use { zos ->
+            fun addFile(f: File, name: String) {
+                zos.putNextEntry(ZipEntry(name))
+                f.inputStream().use { it.copyTo(zos) }
+                zos.closeEntry()
+            }
+            val gameDir = File(dist, "Tilcayo")
+            for (f in gameDir.walkTopDown().filter { it.isFile }.sortedBy { it.path }) {
+                addFile(f, "Tilcayo/" + f.relativeTo(gameDir).invariantSeparatorsPath)
+            }
+            if (guide.exists()) addFile(guide, guide.name)
+        }
+        logger.lifecycle("Архив: ${zipFile.absolutePath} (${zipFile.length() / 1024 / 1024} МБ)")
     }
 }
